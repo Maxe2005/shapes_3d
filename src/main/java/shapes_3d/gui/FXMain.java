@@ -16,6 +16,7 @@ import javafx.stage.Stage;
 import ray_tracer.parsing.SceneFileParser;
 import ray_tracer.parsing.Camera;
 import ray_tracer.geometry.Vector;
+import ray_tracer.geometry.Point;
 import ray_tracer.renderer.DefaultRenderer;
 import ray_tracer.renderer.RenderOptions;
 import ray_tracer.renderer.RenderTask;
@@ -47,11 +48,13 @@ public class FXMain extends Application {
         imageView.setFitWidth(width);
         imageView.setFitHeight(height);
         imageView.setPreserveRatio(true);
+        imageView.setScaleY(-1);
 
         canvasImage = new WritableImage(width, height);
         imageView.setImage(canvasImage);
 
         Button loadBtn = new Button("Charger scène...");
+        loadBtn.setFocusTraversable(false);
         loadBtn.setOnAction(ev -> onLoadScene(stage));
 
         root.setTop(loadBtn);
@@ -89,28 +92,76 @@ public class FXMain extends Application {
     private void onKeyPressed(javafx.scene.input.KeyEvent ev) {
         if (currentScene == null) return;
         Camera cam = currentScene.getCamera();
-        double step = 0.5;
+        
+        // Spherical coordinates movement
+        Point lookFrom = cam.getLookFrom();
+        Point lookAt = cam.getLookAt();
+        
+        // Vector from LookAt to LookFrom
+        Vector v = lookFrom.subtraction(lookAt);
+        
+        double r = v.norm();
+        // theta: angle from Y axis (0 to PI)
+        double theta = Math.acos(v.getY() / r);
+        // phi: angle in XZ plane
+        double phi = Math.atan2(v.getZ(), v.getX());
+        
+        double angleStep = Math.toRadians(5);
+        double zoomStep = r * 0.1;
+        
         KeyCode code = ev.getCode();
-        try {
-            if (code == KeyCode.LEFT) {
-                cam = cam.copy().translate(new Vector(-step, 0, 0));
-            } else if (code == KeyCode.RIGHT) {
-                cam = cam.copy().translate(new Vector(step, 0, 0));
-            } else if (code == KeyCode.UP) {
-                cam = cam.copy().translate(new Vector(0, 0, -step));
-            } else if (code == KeyCode.DOWN) {
-                cam = cam.copy().translate(new Vector(0, 0, step));
-            } else if (code == KeyCode.Q) {
-                cam = cam.copy().translate(new Vector(0, step, 0));
-            } else if (code == KeyCode.E) {
-                cam = cam.copy().translate(new Vector(0, -step, 0));
-            } else {
-                return;
-            }
-            currentScene.setCamera(cam);
+        boolean changed = false;
+        
+        if (code == KeyCode.LEFT) {
+            phi += angleStep;
+            changed = true;
+        } else if (code == KeyCode.RIGHT) {
+            phi -= angleStep;
+            changed = true;
+        } else if (code == KeyCode.UP) {
+            theta -= angleStep;
+            changed = true;
+        } else if (code == KeyCode.DOWN) {
+            theta += angleStep;
+            changed = true;
+        } else if (code == KeyCode.A) {
+            r -= zoomStep;
+            if (r < 0.1) r = 0.1;
+            changed = true;
+        } else if (code == KeyCode.R) {
+            r += zoomStep;
+            changed = true;
+        }
+        
+        if (changed) {
+            // Clamp theta to avoid gimbal lock
+            double epsilon = 0.01;
+            if (theta < epsilon) theta = epsilon;
+            if (theta > Math.PI - epsilon) theta = Math.PI - epsilon;
+            
+            // Convert back to Cartesian
+            double x = r * Math.sin(theta) * Math.cos(phi);
+            double y = r * Math.cos(theta);
+            double z = r * Math.sin(theta) * Math.sin(phi);
+            
+            Vector newOffset = new Vector(x, y, z);
+            Point newLookFrom = (Point) lookAt.addition(newOffset);
+            
+            // Recalculate Up vector to keep horizon level
+            Vector forward = lookAt.subtraction(newLookFrom).normalize();
+            Vector worldUp = new Vector(0, 1, 0);
+            Vector right = forward.vectorialProduct(worldUp).normalize();
+            Vector newUp = right.vectorialProduct(forward).normalize();
+            
+            Camera newCam = new Camera(
+                newLookFrom.getX(), newLookFrom.getY(), newLookFrom.getZ(),
+                lookAt.getX(), lookAt.getY(), lookAt.getZ(),
+                newUp.getX(), newUp.getY(), newUp.getZ(),
+                cam.getFov()
+            );
+            
+            currentScene.setCamera(newCam);
             startRender(true);
-        } catch (Exception ex) {
-            ex.printStackTrace();
         }
     }
 
