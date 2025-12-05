@@ -26,7 +26,7 @@
 
         <!-- Dépendance locale pour le ray tracer (doit être installé dans le .m2) -->
         <dependency>
-            <groupId>fr.imt.raytracer</groupId>
+            <groupId>fr.imt.raytracerSAH</groupId>
             <artifactId>ray_tracer</artifactId>
             <version>1.0</version>
         </dependency>
