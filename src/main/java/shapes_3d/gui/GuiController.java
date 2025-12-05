@@ -4,6 +4,9 @@ import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TextArea;
@@ -59,6 +62,8 @@ public class GuiController {
     private Button applyBtn;
     private Button revertBtn;
     private Button insertCameraBtn;
+    private Button saveSceneBtn;
+    private Button saveImageBtn;
 
     public void init(Stage stage) {
         renderer = new DefaultRenderer(Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()));
@@ -96,7 +101,17 @@ public class GuiController {
         insertCameraBtn.setOnAction(ev -> onInsertCameraToEditor());
         insertCameraBtn.setDisable(true);
 
-        HBox topBar = new HBox(8, loadBtn, applyBtn, revertBtn, insertCameraBtn);
+        saveSceneBtn = new Button("Enregistrer scène");
+        saveSceneBtn.setFocusTraversable(false);
+        saveSceneBtn.setOnAction(ev -> onSaveScene());
+        saveSceneBtn.setDisable(true);
+
+        saveImageBtn = new Button("Enregistrer image");
+        saveImageBtn.setFocusTraversable(false);
+        saveImageBtn.setOnAction(ev -> onSaveImage());
+        saveImageBtn.setDisable(false);
+
+        HBox topBar = new HBox(8, loadBtn, applyBtn, revertBtn, insertCameraBtn, saveSceneBtn, saveImageBtn);
 
         // TabPane with Image view and Source editor
         TabPane tabPane = new TabPane();
@@ -219,10 +234,94 @@ public class GuiController {
                 applyBtn.setDisable(false);
                 revertBtn.setDisable(false);
                 insertCameraBtn.setDisable(false);
+                saveSceneBtn.setDisable(false);
             } catch (Exception ignore) {}
         } catch (Exception ex) {
             ex.printStackTrace();
         }
+    }
+
+    // --- Save handlers -------------------------------------------------
+    private void onSaveScene() {
+        if (sourceEditor == null) return;
+        String content = sourceEditor.getText();
+        if (content == null) return;
+
+        // If we have an original file, ask overwrite or save as
+        if (originalSceneFile != null) {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION);
+            a.setTitle("Enregistrer la scène");
+            a.setHeaderText("Enregistrer les modifications de la scène");
+            a.setContentText("Choisissez : écraser le fichier original, enregistrer sous un nouveau nom, ou annuler.");
+            ButtonType overwrite = new ButtonType("Écraser");
+            ButtonType saveAs = new ButtonType("Enregistrer sous...");
+            ButtonType cancel = new ButtonType("Annuler", ButtonBar.ButtonData.CANCEL_CLOSE);
+            a.getButtonTypes().setAll(overwrite, saveAs, cancel);
+            a.showAndWait().ifPresent(choice -> {
+                if (choice == overwrite) {
+                    try {
+                        SaveManager.saveSceneText(originalSceneFile.toPath(), content);
+                    } catch (IOException e) {
+                        showError("Erreur lors de l'enregistrement : " + e.getMessage());
+                    }
+                } else if (choice == saveAs) {
+                    FileChooser chooser = new FileChooser();
+                    chooser.setTitle("Enregistrer la scène sous...");
+                    chooser.setInitialFileName(originalSceneFile.getName());
+                    File dest = chooser.showSaveDialog(imageView.getScene().getWindow());
+                    if (dest != null) {
+                        try {
+                            SaveManager.saveSceneText(dest.toPath(), content);
+                        } catch (IOException e) {
+                            showError("Erreur lors de l'enregistrement : " + e.getMessage());
+                        }
+                    }
+                }
+            });
+        } else {
+            // No original file: prompt save as
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("Enregistrer la scène");
+            File dest = chooser.showSaveDialog(imageView.getScene().getWindow());
+            if (dest != null) {
+                try {
+                    SaveManager.saveSceneText(dest.toPath(), content);
+                    originalSceneFile = dest;
+                } catch (IOException e) {
+                    showError("Erreur lors de l'enregistrement : " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    private void onSaveImage() {
+        javafx.scene.image.Image img = imageView.getImage();
+        if (img == null) {
+            showError("Aucune image à enregistrer.");
+            return;
+        }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Enregistrer l'image");
+        chooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("PNG image", "*.png"),
+                new FileChooser.ExtensionFilter("JPEG image", "*.jpg", "*.jpeg")
+        );
+        File dest = chooser.showSaveDialog(imageView.getScene().getWindow());
+        if (dest != null) {
+            try {
+                SaveManager.saveImage(img, dest.toPath());
+            } catch (IOException e) {
+                showError("Erreur lors de l'enregistrement de l'image : " + e.getMessage());
+            }
+        }
+    }
+
+    private void showError(String msg) {
+        Alert a = new Alert(Alert.AlertType.ERROR);
+        a.setTitle("Erreur");
+        a.setHeaderText(null);
+        a.setContentText(msg);
+        a.showAndWait();
     }
 
     private void onApplyEditorChanges() {
