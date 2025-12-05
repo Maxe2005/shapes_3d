@@ -9,7 +9,6 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
@@ -58,7 +57,8 @@ public class GuiController {
     private int height = 600;
     private File originalSceneFile;
     private String originalSceneContent;
-    private TextArea sourceEditor;
+    private SceneTextEditor sourceEditor;
+    private boolean sourceTabViewed = false;
     private Button applyBtn;
     private Button revertBtn;
     private Button insertCameraBtn;
@@ -119,7 +119,7 @@ public class GuiController {
         imageTab.setContent(imageBox);
         imageTab.setClosable(false);
 
-        sourceEditor = new TextArea();
+        sourceEditor = new SceneTextEditor();
         sourceEditor.setWrapText(false);
         sourceEditor.setDisable(true);
         Tab sourceTab = new Tab("Source (.scene)");
@@ -131,10 +131,25 @@ public class GuiController {
 
         tabPane.getTabs().addAll(imageTab, sourceTab);
 
+        // When the user selects the Source tab for the first time, scroll the editor to the end
+        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == sourceTab && !sourceTabViewed) {
+                sourceTabViewed = true;
+                try {
+                    // SceneTextEditor provides scrollToStart
+                    if (sourceEditor != null) sourceEditor.scrollToStart();
+                } catch (Exception ignored) {}
+            }
+        });
+
         root.setTop(topBar);
         root.setCenter(tabPane);
 
         Scene fxScene = new Scene(root, width, height + 80);
+        // Load editor highlighting stylesheet (if available)
+        try {
+            fxScene.getStylesheets().add(getClass().getResource("/editor-highlighting.css").toExternalForm());
+        } catch (Exception ignored) {}
 
         // Capture key events at scene level so TabPane doesn't consume arrow keys
         fxScene.addEventFilter(KeyEvent.KEY_PRESSED, ev -> {

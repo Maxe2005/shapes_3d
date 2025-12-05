@@ -1,0 +1,12 @@
+/* Styles for SceneTextEditor (RichTextFX) */
+.keyword {
+  -fx-fill: #0000ff; /* blue */
+  -fx-font-weight: bold;
+}
+.comment {
+  -fx-fill: #008000; /* green */
+  -fx-font-style: italic;
+}
+.number {
+  -fx-fill: #aa00aa; /* purple */
+}
