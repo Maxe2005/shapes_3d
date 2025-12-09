@@ -1,7 +1,6 @@
 package shapes_3d.gui;
 
 import javafx.application.Platform;
-import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
@@ -12,8 +11,6 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ListCell;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.PixelWriter;
-import javafx.scene.image.WritableImage;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
@@ -28,20 +25,16 @@ import ray_tracer.parsing.SceneFileParser;
 import ray_tracer.parsing.Camera;
 import ray_tracer.geometry.Point;
 import ray_tracer.geometry.Vector;
-import ray_tracer.renderer.DefaultRenderer;
 import ray_tracer.renderer.ProgressListener;
 import ray_tracer.renderer.RenderOptions;
-import ray_tracer.renderer.RenderTask;
 import ray_tracer.renderer.RenderUpdate;
 
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import shapes_3d.renderer.RenderService;
 
 /**
  * Controller that builds the UI and contains the logic previously in FXMain.
@@ -50,11 +43,10 @@ import java.util.concurrent.Executors;
 public class GuiController {
 
     private ImageView imageView;
-    private WritableImage canvasImage;
     private ray_tracer.parsing.Scene currentScene;
-    private DefaultRenderer renderer;
-    private RenderTask currentTask;
-    private ExecutorService exec = Executors.newSingleThreadExecutor();
+    private RenderService renderService;
+    private ImagePane imagePane;
+    private CameraController cameraController = new CameraController();
     private int width = 800;
     private int height = 600;
     private File originalSceneFile;
@@ -74,15 +66,12 @@ public class GuiController {
     private ParserIssuesController parserIssuesController;
 
     public void init(Stage stage) {
-        renderer = new DefaultRenderer(Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()));
+        renderService = new RenderService();
+        imagePane = new ImagePane();
 
         BorderPane root = new BorderPane();
-        imageView = new ImageView();
-        imageView.setPreserveRatio(true);
-        imageView.setScaleY(-1);
-
-        canvasImage = new WritableImage(width, height);
-        imageView.setImage(canvasImage);
+        imageView = imagePane.getImageView();
+        imagePane.createCanvas(width, height);
 
         StackPane imageBox = new StackPane(imageView);
         // Allow the imageBox to shrink below the image intrinsic size
@@ -226,8 +215,7 @@ public class GuiController {
         stage.setTitle("RayTracer - Visualisation interactive (prototype)");
         stage.setScene(fxScene);
         stage.setOnCloseRequest(ev -> {
-            try { if (currentTask != null && !currentTask.isDone()) currentTask.cancel(); } catch (Exception ignored) {}
-            try { exec.shutdownNow(); } catch (Exception ignored) {}
+            try { if (renderService != null) renderService.shutdown(); } catch (Exception ignored) {}
             Platform.exit();
             System.exit(0);
         });
@@ -307,8 +295,7 @@ public class GuiController {
             currentScene.setOutputFile("output.png");
             this.width = Math.max(200, currentScene.getWidth());
             this.height = Math.max(200, currentScene.getHeight());
-            canvasImage = new WritableImage(this.width, this.height);
-            imageView.setImage(canvasImage);
+            imagePane.createCanvas(this.width, this.height);
             startRender(true);
             try {
                 sourceEditor.setDisable(false);
@@ -428,8 +415,7 @@ public class GuiController {
                 preview.setOutputFile("output_preview.png");
                 this.width = Math.max(200, preview.getWidth());
                 this.height = Math.max(200, preview.getHeight());
-                canvasImage = new WritableImage(this.width, this.height);
-                imageView.setImage(canvasImage);
+                imagePane.createCanvas(this.width, this.height);
                 currentScene = preview;
                 imageTab.setDisable(false);
                 sourceTab.setDisable(false);
@@ -465,8 +451,7 @@ public class GuiController {
             if (originalSceneContent != null) sourceEditor.setText(originalSceneContent);
             this.width = Math.max(200, currentScene.getWidth());
             this.height = Math.max(200, currentScene.getHeight());
-            canvasImage = new WritableImage(this.width, this.height);
-            imageView.setImage(canvasImage);
+            imagePane.createCanvas(this.width, this.height);
             imageTab.setDisable(false);
             sourceTab.setDisable(false);
             warningsTab.setDisable(false);
@@ -485,77 +470,11 @@ public class GuiController {
 
     private void onKeyPressed(javafx.scene.input.KeyEvent ev) {
         if (currentScene == null) return;
-        Camera cam = currentScene.getCamera();
-
-        Point lookFrom = cam.getLookFrom();
-        Point lookAt = cam.getLookAt();
-        Vector v = lookFrom.subtraction(lookAt);
-
-        double r = v.norm();
-        double theta = Math.acos(v.getY() / r);
-        double phi = Math.atan2(v.getZ(), v.getX());
-
-        double angleStep = Math.toRadians(5);
-        double zoomStep = r * 0.1;
-
-        KeyCode code = ev.getCode();
-        boolean changed = false;
-
-        if (code == KeyCode.LEFT) {
-            phi += angleStep;
-            changed = true;
-        } else if (code == KeyCode.RIGHT) {
-            phi -= angleStep;
-            changed = true;
-        } else if (code == KeyCode.UP) {
-            theta -= angleStep;
-            changed = true;
-        } else if (code == KeyCode.DOWN) {
-            theta += angleStep;
-            changed = true;
-        } else if (code == KeyCode.A) {
-            r -= zoomStep;
-            if (r < 0.1) r = 0.1;
-            changed = true;
-        } else if (code == KeyCode.R) {
-            r += zoomStep;
-            changed = true;
-        }
-
-        if (changed) {
-            double epsilon = 0.01;
-            if (theta < epsilon) theta = epsilon;
-            if (theta > Math.PI - epsilon) theta = Math.PI - epsilon;
-
-            double x = r * Math.sin(theta) * Math.cos(phi);
-            double y = r * Math.cos(theta);
-            double z = r * Math.sin(theta) * Math.sin(phi);
-
-            Vector newOffset = new Vector(x, y, z);
-            Point newLookFrom = (Point) lookAt.addition(newOffset);
-
-            Vector forward = lookAt.subtraction(newLookFrom).normalize();
-            Vector worldUp = new Vector(0, 1, 0);
-            Vector right = forward.vectorialProduct(worldUp).normalize();
-            Vector newUp = right.vectorialProduct(forward).normalize();
-
-            Camera newCam = new Camera(
-                    newLookFrom.getX(), newLookFrom.getY(), newLookFrom.getZ(),
-                    lookAt.getX(), lookAt.getY(), lookAt.getZ(),
-                    newUp.getX(), newUp.getY(), newUp.getZ(),
-                    cam.getFov()
-            );
-
-            currentScene.setCamera(newCam);
-            startRender(true);
-        }
+        boolean changed = cameraController.handleKeyPressed(ev, currentScene);
+        if (changed) startRender(true);
     }
 
     private synchronized void startRender(boolean lowRes) {
-        try {
-            if (currentTask != null && !currentTask.isDone()) currentTask.cancel();
-        } catch (Exception ignored) {}
-
         RenderOptions opts = new RenderOptions();
         opts.samplesPerPixel = lowRes ? 1 : 10;
         opts.maxDepth = 5;
@@ -564,39 +483,16 @@ public class GuiController {
         opts.lowResFactor = lowRes ? 0.4 : 1.0;
         opts.progressive = false;
 
-        canvasImage = new WritableImage(width, height);
-        imageView.setImage(canvasImage);
+        imagePane.createCanvas(width, height);
 
-        currentTask = renderer.render(currentScene, currentScene.getCamera(), width, height, opts);
-        currentTask.addProgressListener(new ProgressListener() {
-            @Override
-            public void onUpdate(RenderUpdate update) {
-                Platform.runLater(() -> applyUpdate(update));
-            }
-        });
-
-        exec.execute(() -> {
-            try {
-                BufferedImage finalImg = currentTask.getFuture().get();
-                Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(finalImg, null)));
-            } catch (Exception e) {
-                // cancelled or failed
-            }
-        });
+        renderService.render(currentScene, currentScene.getCamera(), width, height, opts,
+                new ProgressListener() {
+                    @Override
+                    public void onUpdate(RenderUpdate update) {
+                        Platform.runLater(() -> imagePane.applyBufferedPart(update.imagePart, update.x, update.y));
+                    }
+                }, img -> Platform.runLater(() -> imagePane.setImageFromBuffered(img)));
     }
-
-    private void applyUpdate(RenderUpdate update) {
-        BufferedImage part = update.imagePart;
-        int startX = update.x;
-        int startY = update.y;
-        PixelWriter pw = canvasImage.getPixelWriter();
-        for (int y = 0; y < part.getHeight(); y++) {
-            for (int x = 0; x < part.getWidth(); x++) {
-                int argb = part.getRGB(x, y);
-                pw.setArgb(startX + x, startY + y, argb);
-            }
-        }
-        imageView.setImage(canvasImage);
-    }
+    
 
 }
