@@ -9,6 +9,8 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.ListView;
+import javafx.scene.control.ListCell;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
@@ -64,6 +66,12 @@ public class GuiController {
     private Button insertCameraBtn;
     private Button saveSceneBtn;
     private Button saveImageBtn;
+    private TabPane tabPane;
+    private Tab imageTab;
+    private Tab sourceTab;
+    private Tab warningsTab;
+    private ListView<String> warningsList;
+    private ParserIssuesController parserIssuesController;
 
     public void init(Stage stage) {
         renderer = new DefaultRenderer(Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()));
@@ -77,9 +85,20 @@ public class GuiController {
         imageView.setImage(canvasImage);
 
         StackPane imageBox = new StackPane(imageView);
+        // Allow the imageBox to shrink below the image intrinsic size
+        // to avoid a circular sizing dependency (StackPane sizing from child).
+        imageBox.setMinSize(0, 0);
+        imageBox.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         imageBox.setPrefSize(Double.MAX_VALUE, Double.MAX_VALUE);
         StackPane.setMargin(imageView, javafx.geometry.Insets.EMPTY);
         VBox.setVgrow(imageBox, Priority.ALWAYS);
+
+        // Make the ImageView resize to the available area while preserving the
+        // original image aspect ratio. Binding fitWidth/fitHeight to the
+        // container ensures the image is always contained and fills space.
+        imageView.setSmooth(true);
+        imageView.fitWidthProperty().bind(imageBox.widthProperty());
+        imageView.fitHeightProperty().bind(imageBox.heightProperty());
 
         Button loadBtn = new Button("Charger scène...");
         loadBtn.setFocusTraversable(false);
@@ -109,27 +128,64 @@ public class GuiController {
         saveImageBtn = new Button("Enregistrer image");
         saveImageBtn.setFocusTraversable(false);
         saveImageBtn.setOnAction(ev -> onSaveImage());
-        saveImageBtn.setDisable(false);
+        // No scene loaded yet -> disable image saving
+        saveImageBtn.setDisable(true);
 
         HBox topBar = new HBox(8, loadBtn, applyBtn, revertBtn, insertCameraBtn, saveSceneBtn, saveImageBtn);
 
-        // TabPane with Image view and Source editor
-        TabPane tabPane = new TabPane();
-        Tab imageTab = new Tab("Image");
+        // TabPane with Image view, Source editor and Warnings
+        tabPane = new TabPane();
+        imageTab = new Tab("Image");
         imageTab.setContent(imageBox);
         imageTab.setClosable(false);
 
         sourceEditor = new SceneTextEditor();
         sourceEditor.setWrapText(false);
         sourceEditor.setDisable(true);
-        Tab sourceTab = new Tab("Source (.scene)");
+        sourceTab = new Tab("Source (.scene)");
         VBox sourceBox = new VBox(sourceEditor);
         sourceBox.setPrefSize(Double.MAX_VALUE, Double.MAX_VALUE);
         VBox.setVgrow(sourceEditor, Priority.ALWAYS);
         sourceTab.setContent(sourceBox);
         sourceTab.setClosable(false);
 
-        tabPane.getTabs().addAll(imageTab, sourceTab);
+        // Warnings tab
+        warningsList = new ListView<>();
+        warningsList.setPlaceholder(new javafx.scene.control.Label("Aucun warning"));
+        warningsList.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    // style warnings in orange
+                    setStyle("-fx-text-fill: darkorange;");
+                }
+            }
+        });
+        warningsTab = new Tab("Warnings");
+        VBox warnBox = new VBox(warningsList);
+        warnBox.setPrefSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        VBox.setVgrow(warningsList, Priority.ALWAYS);
+        warningsTab.setContent(warnBox);
+        warningsTab.setClosable(false);
+
+        tabPane.getTabs().addAll(imageTab, sourceTab, warningsTab);
+
+        // Create parser/issues controller
+        parserIssuesController = new ParserIssuesController(imageTab, sourceTab, warningsTab, warningsList,
+                applyBtn, revertBtn, insertCameraBtn, saveSceneBtn, saveImageBtn, sourceEditor);
+
+        // By default, no scene is loaded: disable all tabs and related UI
+        try {
+            imageTab.setDisable(true);
+            sourceTab.setDisable(true);
+            warningsTab.setDisable(true);
+            warningsList.getItems().clear();
+        } catch (Exception ignored) {}
 
         // When the user selects the Source tab for the first time, scroll the editor to the end
         tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
@@ -151,8 +207,15 @@ public class GuiController {
             fxScene.getStylesheets().add(getClass().getResource("/editor-highlighting.css").toExternalForm());
         } catch (Exception ignored) {}
 
-        // Capture key events at scene level so TabPane doesn't consume arrow keys
+        // Capture key events at scene level but ignore when editor has focus
         fxScene.addEventFilter(KeyEvent.KEY_PRESSED, ev -> {
+            // If the source editor has the focus, let it handle all keys (navigation, typing)
+            try {
+                if (sourceEditor != null && !sourceEditor.isDisable() && sourceEditor.isEditorFocused()) {
+                    return;
+                }
+            } catch (Exception ignored) {}
+
             KeyCode code = ev.getCode();
             if (code == KeyCode.LEFT || code == KeyCode.RIGHT || code == KeyCode.UP || code == KeyCode.DOWN || code == KeyCode.A || code == KeyCode.R) {
                 onKeyPressed(ev);
@@ -170,6 +233,8 @@ public class GuiController {
         });
         stage.show();
     }
+
+
 
     private void onInsertCameraToEditor() {
         if (currentScene == null || sourceEditor == null) return;
@@ -230,6 +295,7 @@ public class GuiController {
         if (f == null) return;
         try {
             currentScene = SceneFileParser.parse(f.getAbsolutePath());
+            // successful parse
             originalSceneFile = f;
             try {
                 originalSceneContent = Files.readString(f.toPath(), StandardCharsets.UTF_8);
@@ -250,9 +316,19 @@ public class GuiController {
                 revertBtn.setDisable(false);
                 insertCameraBtn.setDisable(false);
                 saveSceneBtn.setDisable(false);
+                imageTab.setDisable(false);
+                sourceTab.setDisable(false);
+                warningsTab.setDisable(false);
+                saveImageBtn.setDisable(false);
             } catch (Exception ignore) {}
+            parserIssuesController.updateWarnings();
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // If parse failed but is a ParserException, show it and still load the source file
+            if (ParserIssuesController.isParserException(ex)) {
+                parserIssuesController.handleParserException(ex, f);
+            } else {
+                ex.printStackTrace();
+            }
         }
     }
 
@@ -355,10 +431,26 @@ public class GuiController {
                 canvasImage = new WritableImage(this.width, this.height);
                 imageView.setImage(canvasImage);
                 currentScene = preview;
+                imageTab.setDisable(false);
+                sourceTab.setDisable(false);
+                warningsTab.setDisable(false);
+                saveImageBtn.setDisable(false);
                 startRender(true);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+                if (ParserIssuesController.isParserException(e)) {
+                // show parser error but allow user to continue editing
+                Alert a = new Alert(Alert.AlertType.ERROR);
+                a.setTitle("Erreur d'analyse");
+                a.setHeaderText("ParserException lors de l'application des modifications");
+                a.setContentText(e.getMessage());
+                a.showAndWait();
+                // disable image/tab since no image was generated
+                try { imageTab.setDisable(true); saveImageBtn.setDisable(true); } catch (Exception ignored) {}
+                parserIssuesController.updateWarnings();
+            } else {
+                e.printStackTrace();
+            }
         } finally {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
@@ -375,11 +467,21 @@ public class GuiController {
             this.height = Math.max(200, currentScene.getHeight());
             canvasImage = new WritableImage(this.width, this.height);
             imageView.setImage(canvasImage);
+            imageTab.setDisable(false);
+            sourceTab.setDisable(false);
+            warningsTab.setDisable(false);
+            saveImageBtn.setDisable(false);
             startRender(true);
         } catch (Exception e) {
-            e.printStackTrace();
+            if (ParserIssuesController.isParserException(e)) {
+                parserIssuesController.handleParserException(e, originalSceneFile);
+            } else {
+                e.printStackTrace();
+            }
         }
     }
+
+    
 
     private void onKeyPressed(javafx.scene.input.KeyEvent ev) {
         if (currentScene == null) return;

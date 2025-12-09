@@ -26,9 +26,9 @@
 
         <!-- Dépendance locale pour le ray tracer (doit être installé dans le .m2) -->
         <dependency>
-            <groupId>fr.imt.raytracerF</groupId>
+            <groupId>fr.imt.raytracer</groupId>
             <artifactId>ray_tracer</artifactId>
-            <version>1.0</version>
+            <version>1.0.2</version>
         </dependency>
 
         <!-- JavaFX - modules utilisés -->

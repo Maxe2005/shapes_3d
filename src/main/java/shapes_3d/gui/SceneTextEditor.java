@@ -8,6 +8,7 @@ import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.util.Duration;
 import org.fxmisc.richtext.CodeArea;
+import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
@@ -27,6 +28,8 @@ public class SceneTextEditor extends VBox {
 
     public SceneTextEditor() {
         codeArea = new CodeArea();
+        // show line numbers in the gutter
+        codeArea.setParagraphGraphicFactory(LineNumberFactory.get(codeArea));
         vsPane = new VirtualizedScrollPane<>(codeArea);
         this.getChildren().add(vsPane);
         VBox.setVgrow(vsPane, Priority.ALWAYS);
@@ -132,5 +135,13 @@ public class SceneTextEditor extends VBox {
     @Override
     public void requestFocus() {
         codeArea.requestFocus();
+    }
+
+    /**
+     * Retourne vrai si l'éditeur interne a le focus (utile pour décider
+     * si les raccourcis globaux doivent être ignorés).
+     */
+    public boolean isEditorFocused() {
+        return codeArea.isFocused();
     }
 }
